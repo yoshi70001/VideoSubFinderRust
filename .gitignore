@@ -2,3 +2,4 @@
 /models
 /extracted_text_frames_rust
 *.lock
+/bundle

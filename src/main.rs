@@ -19,7 +19,7 @@ use std::time::Duration; // For formatting
 const EXTRACTED_FRAMES_DIR_RUST: &str = "extracted_text_frames_rust";
 const MASK_CHANGE_THRESHOLD_PERCENT_RUST: f64 = 10.0;
 const MIN_CHANGE_DURATION_MS_RUST: u64 = 250;
-const MODEL_PATH_RUST: &str = "models/model_int8.onnx"; // Ensure this model exists
+const MODEL_PATH_RUST: &str = "models/model.onnx"; // Ensure this model exists
 
 #[derive(Debug, thiserror::Error)]
 pub enum ExtractorError {
@@ -74,7 +74,7 @@ impl TextFrameExtractor {
         fs::create_dir_all(output_dir)?;
 
         let session = Session::builder()?
-            .with_optimization_level(GraphOptimizationLevel::Level1)?
+            .with_optimization_level(GraphOptimizationLevel::Level3)?
             // .with_parallel_execution(true)? // If desired and ort version supports
             // .with_intra_threads(4)?
             .with_execution_providers([
@@ -274,7 +274,7 @@ impl TextFrameExtractor {
         let mut contours_mask = infered_frame_eroded.clone(); // findContours modifies input
         // If you want to invert the mask, uncomment the next line:
         core::bitwise_not(&infered_frame_eroded, &mut contours_mask,&Mat::default())?;
-        highgui::imshow("contours_mask", &contours_mask)?;
+        // highgui::imshow("contours_mask", &contours_mask)?;
         let mut contours = opencv::core::Vector::<opencv::core::Vector<core::Point>>::new();
         imgproc::find_contours(
             &mut contours_mask, // Input image, will be modified
@@ -491,11 +491,11 @@ impl TextFrameExtractor {
                     highgui::wait_key(1)?;
                 }
             }
-            println!(
-                "Procesando frame {} a tiempo: {:.2} segundos",
-                frame_count,
-                frame_count as f64 / fps
-            );
+            // println!(
+            //     "Procesando frame {} a tiempo: {:.2} segundos",
+            //     frame_count,
+            //     frame_count as f64 / fps
+            // );
             frame_count += 1;
         }
 
@@ -522,7 +522,24 @@ impl TextFrameExtractor {
 }
 
 fn main() -> Result<()> {
-    let video_file_path_str = "AormeSubs_Araiya_san!_Ore_to_Aitsu_ga_Onnayu_de!_01_SIN_CENSURA.mp4";
+    struct Cli {
+    display_frames: bool,
+    path: std::path::PathBuf,
+}
+    let display_frames = std::env::args().nth(2).map_or(false, |arg| {
+        arg.to_lowercase() == "true" || arg == "1"
+    });
+    let path = std::env::args().nth(1).expect("No definio el path del video");
+
+    let args = Cli {
+        display_frames: display_frames,
+        path: std::path::PathBuf::from(path),
+    };
+
+    println!("pattern: {:?}, path: {:?}", args.display_frames, args.path);
+    let video_file_path_str = args.path.to_str().ok_or_else(|| {
+        ExtractorError::PathError("Invalid video file path".into())
+    })?;
     let video_file_path = Path::new(video_file_path_str);
 
     if !video_file_path.exists() {
@@ -568,7 +585,7 @@ fn main() -> Result<()> {
     println!("Procesando video (Rust): {}", video_file_path_str);
     let start_time_extraction = std::time::Instant::now();
 
-    extractor.process_video_file(video_file_path, true)?; // display_frames = false for now
+    extractor.process_video_file(video_file_path, display_frames)?; // display_frames = false for now
 
     println!(
         "Extracción de frames (Rust) tomó: {:.2} segundos.",
