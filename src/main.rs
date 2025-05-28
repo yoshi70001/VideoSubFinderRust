@@ -2,11 +2,11 @@ use chrono::Duration as ChronoDuration;
 use ndarray::{Array, Axis, Ix4, s};
 use opencv::{
     core::{self, CV_8UC1, Mat, Size, Vec3b},
+    highgui,
     imgcodecs,
     imgproc,
     prelude::*, // For MatTrait, MatTraitConst
     videoio,
-    highgui
 };
 use ort::Error as OrtError;
 use ort::execution_providers::{CUDAExecutionProvider, DirectMLExecutionProvider};
@@ -79,8 +79,8 @@ impl TextFrameExtractor {
             // .with_intra_threads(4)?
             .with_execution_providers([
                 DirectMLExecutionProvider::default().build(),
-                CUDAExecutionProvider::default().build()
-                ])?
+                CUDAExecutionProvider::default().build(),
+            ])?
             .commit_from_file(model_path)?;
 
         let input_name = session.inputs[0].name.clone();
@@ -273,7 +273,7 @@ impl TextFrameExtractor {
         // Let's assume the mask `infered_frame_eroded` has text regions as WHITE (255).
         let mut contours_mask = infered_frame_eroded.clone(); // findContours modifies input
         // If you want to invert the mask, uncomment the next line:
-        core::bitwise_not(&infered_frame_eroded, &mut contours_mask,&Mat::default())?;
+        core::bitwise_not(&infered_frame_eroded, &mut contours_mask, &Mat::default())?;
         // highgui::imshow("contours_mask", &contours_mask)?;
         let mut contours = opencv::core::Vector::<opencv::core::Vector<core::Point>>::new();
         imgproc::find_contours(
@@ -523,13 +523,15 @@ impl TextFrameExtractor {
 
 fn main() -> Result<()> {
     struct Cli {
-    display_frames: bool,
-    path: std::path::PathBuf,
-}
-    let display_frames = std::env::args().nth(2).map_or(false, |arg| {
-        arg.to_lowercase() == "true" || arg == "1"
-    });
-    let path = std::env::args().nth(1).expect("No definio el path del video");
+        display_frames: bool,
+        path: std::path::PathBuf,
+    }
+    let display_frames = std::env::args()
+        .nth(2)
+        .map_or(false, |arg| arg.to_lowercase() == "true" || arg == "1");
+    let path = std::env::args()
+        .nth(1)
+        .expect("No definio el path del video");
 
     let args = Cli {
         display_frames: display_frames,
@@ -537,9 +539,10 @@ fn main() -> Result<()> {
     };
 
     println!("pattern: {:?}, path: {:?}", args.display_frames, args.path);
-    let video_file_path_str = args.path.to_str().ok_or_else(|| {
-        ExtractorError::PathError("Invalid video file path".into())
-    })?;
+    let video_file_path_str = args
+        .path
+        .to_str()
+        .ok_or_else(|| ExtractorError::PathError("Invalid video file path".into()))?;
     let video_file_path = Path::new(video_file_path_str);
 
     if !video_file_path.exists() {
