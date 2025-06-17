@@ -10,7 +10,8 @@ use opencv::{
 };
 use ort::Error as OrtError;
 use ort::execution_providers::{
-    CPUExecutionProvider, CUDAExecutionProvider, DirectMLExecutionProvider, ROCmExecutionProvider,
+    CPUExecutionProvider, CUDAExecutionProvider, CoreMLExecutionProvider,
+    DirectMLExecutionProvider, OpenVINOExecutionProvider, ROCmExecutionProvider,
 };
 use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
@@ -82,6 +83,8 @@ impl TextFrameExtractor {
             vec![
                 ROCmExecutionProvider::default().build(),
                 CUDAExecutionProvider::default().build(),
+                CoreMLExecutionProvider::default().build(),
+                OpenVINOExecutionProvider::default().build(),
                 DirectMLExecutionProvider::default().build(),
             ]
         };
@@ -198,8 +201,7 @@ impl TextFrameExtractor {
         // Add batch dimension: CHW -> NCHW
         Ok(array_chw.insert_axis(Axis(0)))
     }
-    
-    
+
     fn postprocess_onnx_output(
         &self,
         onnx_output_single_frame: ndarray::ArrayView3<f32>, // CHW (1xHxW)
