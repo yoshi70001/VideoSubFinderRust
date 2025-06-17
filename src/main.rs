@@ -9,13 +9,15 @@ use opencv::{
     videoio,
 };
 use ort::Error as OrtError;
-use ort::execution_providers::{CUDAExecutionProvider, DirectMLExecutionProvider};
+use ort::execution_providers::{
+    CPUExecutionProvider, CUDAExecutionProvider, DirectMLExecutionProvider, ROCmExecutionProvider,
+};
 use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration; // For formatting
-
+use std::thread::available_parallelism;
 const EXTRACTED_FRAMES_DIR_RUST: &str = "extracted_text_frames_rust";
 const MASK_CHANGE_THRESHOLD_PERCENT_RUST: f64 = 10.0;
 const MIN_CHANGE_DURATION_MS_RUST: u64 = 250;
@@ -70,17 +72,27 @@ impl TextFrameExtractor {
         output_dir: &Path,
         mask_change_threshold: f64,
         min_change_duration_ms: u64,
+        use_cpu: bool,
     ) -> Result<Self> {
         fs::create_dir_all(output_dir)?;
 
+        let providers = if use_cpu {
+        vec![
+            CPUExecutionProvider::default().build(),
+        ]
+    } else {
+        vec![
+            ROCmExecutionProvider::default().build(),
+            CUDAExecutionProvider::default().build(),
+            DirectMLExecutionProvider::default().build(),
+        ]
+    };
+
         let session = Session::builder()?
-            .with_optimization_level(GraphOptimizationLevel::Level3)?
-            // .with_parallel_execution(true)? // If desired and ort version supports
-            // .with_intra_threads(4)?
-            .with_execution_providers([
-                DirectMLExecutionProvider::default().build(),
-                CUDAExecutionProvider::default().build(),
-            ])?
+            .with_optimization_level(GraphOptimizationLevel::Disable)?
+             .with_parallel_execution(true)? // If desired and ort version supports
+             .with_intra_threads(available_parallelism()?.get())?
+            .with_execution_providers(providers)?
             .commit_from_file(model_path)?;
 
         let input_name = session.inputs[0].name.clone();
@@ -523,9 +535,13 @@ impl TextFrameExtractor {
 
 fn main() -> Result<()> {
     struct Cli {
+        use_cpu: bool,
         display_frames: bool,
         path: std::path::PathBuf,
     }
+    let use_cpu = std::env::args()
+        .nth(3)
+        .map_or(false, |arg| arg.to_lowercase() == "true" || arg == "1");
     let display_frames = std::env::args()
         .nth(2)
         .map_or(false, |arg| arg.to_lowercase() == "true" || arg == "1");
@@ -534,11 +550,12 @@ fn main() -> Result<()> {
         .expect("No definio el path del video");
 
     let args = Cli {
+        use_cpu: use_cpu,
         display_frames: display_frames,
         path: std::path::PathBuf::from(path),
     };
 
-    println!("pattern: {:?}, path: {:?}", args.display_frames, args.path);
+    println!("display_frames: {:?}, path: {:?}, use_cpu: {:?}", args.display_frames, args.path, args.use_cpu);
     let video_file_path_str = args
         .path
         .to_str()
@@ -571,6 +588,7 @@ fn main() -> Result<()> {
         output_dir,
         MASK_CHANGE_THRESHOLD_PERCENT_RUST,
         MIN_CHANGE_DURATION_MS_RUST,
+        args.use_cpu,
     )?;
 
     extractor.clear_output_directory()?;
