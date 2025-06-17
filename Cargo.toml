@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ort = { version = "2.0.0-rc.9", features = [ "directml","cuda" ] }
+ort = { version = "2.0.0-rc.9", features = [ "directml","cuda","openvino","rocm" ] }
 image = "0.25"
 ndarray = "0.16"
 opencv = "0.94.4" # Check for latest version, might need to specify features
