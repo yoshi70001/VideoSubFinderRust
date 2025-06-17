@@ -1,7 +1,7 @@
 use chrono::Duration as ChronoDuration;
 use ndarray::{Array, Axis, Ix4, s};
 use opencv::{
-    core::{self, CV_8UC1, Mat, Size, Vec3b},
+    core::{self, CV_8UC1, Mat, Size},
     highgui,
     imgcodecs,
     imgproc,
@@ -135,49 +135,6 @@ impl TextFrameExtractor {
         }
     }
 
-    // fn preprocess_frame_for_onnx(&self, frame_bgr: &Mat) -> Result<Array<f32, Ix4>> {
-    //     let mut resized_frame = Mat::default();
-    //     imgproc::resize(
-    //         frame_bgr,
-    //         &mut resized_frame,
-    //         Size::new(224, 224),
-    //         0.0,
-    //         0.0,
-    //         imgproc::INTER_LINEAR,
-    //     )?;
-
-    //     let mut rgb_frame = Mat::default();
-    //     imgproc::cvt_color(&resized_frame, &mut rgb_frame, imgproc::COLOR_BGR2RGB, 0)?;
-
-    //     // Convert Mat to ndarray [H, W, C]
-    //     let rows = rgb_frame.rows() as usize;
-    //     let cols = rgb_frame.cols() as usize;
-    //     let channels = rgb_frame.channels() as usize;
-
-    //     if channels != 3 {
-    //         return Err(ExtractorError::VideoProcessing(
-    //             "Expected 3 channels for RGB".into(),
-    //         ));
-    //     }
-
-    //     let mut flat_data = Vec::with_capacity(rows * cols * channels);
-    //     for r in 0..rows {
-    //         for c in 0..cols {
-    //             let pixel: &Vec3b = rgb_frame.at_2d(r as i32, c as i32)?;
-    //             flat_data.push((pixel[0] as f32) / 255.0); // R
-    //             flat_data.push((pixel[1] as f32) / 255.0); // G
-    //             flat_data.push((pixel[2] as f32) / 255.0); // B
-    //         }
-    //     }
-
-    //     let array_hwc = Array::from_shape_vec((rows, cols, channels), flat_data)?;
-
-    //     // Transpose HWC to CHW
-    //     let array_chw = array_hwc.permuted_axes([2, 0, 1]).to_owned();
-
-    //     // Add batch dimension: CHW -> NCHW
-    //     Ok(array_chw.insert_axis(Axis(0)))
-    // }
     fn preprocess_frame_for_onnx(&self, frame_bgr: &Mat) -> Result<Array<f32, Ix4>> {
         let mut resized_frame = Mat::default();
         imgproc::resize(
@@ -241,41 +198,8 @@ impl TextFrameExtractor {
         // Add batch dimension: CHW -> NCHW
         Ok(array_chw.insert_axis(Axis(0)))
     }
-    // fn postprocess_onnx_output(
-    //     &self,
-    //     onnx_output_single_frame: ndarray::ArrayView3<f32>,
-    // ) -> Result<Mat> {
-    //     // onnx_output_single_frame is CHW (e.g., 1x224x224 if single channel output, or CxHxW)
-    //     // Assuming output is 1xHxW (single channel mask)
-    //     let output_chw = onnx_output_single_frame;
-    //     let (channels_out, height_out, width_out) = output_chw.dim();
-
-    //     if channels_out != 1 {
-    //         // Assuming model outputs a single channel mask
-    //         return Err(ExtractorError::VideoProcessing(format!(
-    //             "Expected 1 output channel from model, got {}",
-    //             channels_out
-    //         )));
-    //     }
-
-    //     // Transpose CHW to HWC
-    //     let output_hwc = output_chw.permuted_axes([1, 2, 0]); // HxWx1
-
-    //     let mut output_mat = Mat::new_rows_cols_with_default(
-    //         height_out as i32,
-    //         width_out as i32,
-    //         CV_8UC1, // Single channel u8
-    //         core::Scalar::all(0.0),
-    //     )?;
-
-    //     for r in 0..height_out {
-    //         for c in 0..width_out {
-    //             let val = output_hwc[[r, c, 0]]; // Access the single channel
-    //             *output_mat.at_2d_mut::<u8>(r as i32, c as i32)? = if val > 0.5 { 255 } else { 0 };
-    //         }
-    //     }
-    //     Ok(output_mat)
-    // }
+    
+    
     fn postprocess_onnx_output(
         &self,
         onnx_output_single_frame: ndarray::ArrayView3<f32>, // CHW (1xHxW)
