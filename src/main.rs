@@ -16,8 +16,8 @@ use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration; // For formatting
 use std::thread::available_parallelism;
+use std::time::Duration; // For formatting
 const EXTRACTED_FRAMES_DIR_RUST: &str = "extracted_text_frames_rust";
 const MASK_CHANGE_THRESHOLD_PERCENT_RUST: f64 = 10.0;
 const MIN_CHANGE_DURATION_MS_RUST: u64 = 250;
@@ -77,21 +77,19 @@ impl TextFrameExtractor {
         fs::create_dir_all(output_dir)?;
 
         let providers = if use_cpu {
-        vec![
-            CPUExecutionProvider::default().build(),
-        ]
-    } else {
-        vec![
-            ROCmExecutionProvider::default().build(),
-            CUDAExecutionProvider::default().build(),
-            DirectMLExecutionProvider::default().build(),
-        ]
-    };
+            vec![CPUExecutionProvider::default().build()]
+        } else {
+            vec![
+                ROCmExecutionProvider::default().build(),
+                CUDAExecutionProvider::default().build(),
+                DirectMLExecutionProvider::default().build(),
+            ]
+        };
 
         let session = Session::builder()?
             .with_optimization_level(GraphOptimizationLevel::Disable)?
-             .with_parallel_execution(true)? // If desired and ort version supports
-             .with_intra_threads(available_parallelism()?.get())?
+            .with_parallel_execution(true)? // If desired and ort version supports
+            .with_intra_threads(available_parallelism()?.get())?
             .with_execution_providers(providers)?
             .commit_from_file(model_path)?;
 
@@ -137,6 +135,49 @@ impl TextFrameExtractor {
         }
     }
 
+    // fn preprocess_frame_for_onnx(&self, frame_bgr: &Mat) -> Result<Array<f32, Ix4>> {
+    //     let mut resized_frame = Mat::default();
+    //     imgproc::resize(
+    //         frame_bgr,
+    //         &mut resized_frame,
+    //         Size::new(224, 224),
+    //         0.0,
+    //         0.0,
+    //         imgproc::INTER_LINEAR,
+    //     )?;
+
+    //     let mut rgb_frame = Mat::default();
+    //     imgproc::cvt_color(&resized_frame, &mut rgb_frame, imgproc::COLOR_BGR2RGB, 0)?;
+
+    //     // Convert Mat to ndarray [H, W, C]
+    //     let rows = rgb_frame.rows() as usize;
+    //     let cols = rgb_frame.cols() as usize;
+    //     let channels = rgb_frame.channels() as usize;
+
+    //     if channels != 3 {
+    //         return Err(ExtractorError::VideoProcessing(
+    //             "Expected 3 channels for RGB".into(),
+    //         ));
+    //     }
+
+    //     let mut flat_data = Vec::with_capacity(rows * cols * channels);
+    //     for r in 0..rows {
+    //         for c in 0..cols {
+    //             let pixel: &Vec3b = rgb_frame.at_2d(r as i32, c as i32)?;
+    //             flat_data.push((pixel[0] as f32) / 255.0); // R
+    //             flat_data.push((pixel[1] as f32) / 255.0); // G
+    //             flat_data.push((pixel[2] as f32) / 255.0); // B
+    //         }
+    //     }
+
+    //     let array_hwc = Array::from_shape_vec((rows, cols, channels), flat_data)?;
+
+    //     // Transpose HWC to CHW
+    //     let array_chw = array_hwc.permuted_axes([2, 0, 1]).to_owned();
+
+    //     // Add batch dimension: CHW -> NCHW
+    //     Ok(array_chw.insert_axis(Axis(0)))
+    // }
     fn preprocess_frame_for_onnx(&self, frame_bgr: &Mat) -> Result<Array<f32, Ix4>> {
         let mut resized_frame = Mat::default();
         imgproc::resize(
@@ -151,28 +192,48 @@ impl TextFrameExtractor {
         let mut rgb_frame = Mat::default();
         imgproc::cvt_color(&resized_frame, &mut rgb_frame, imgproc::COLOR_BGR2RGB, 0)?;
 
-        // Convert Mat to ndarray [H, W, C]
         let rows = rgb_frame.rows() as usize;
         let cols = rgb_frame.cols() as usize;
-        let channels = rgb_frame.channels() as usize;
+        let channels = rgb_frame.channels() as usize; // Debería ser 3
 
         if channels != 3 {
             return Err(ExtractorError::VideoProcessing(
-                "Expected 3 channels for RGB".into(),
+                "Expected 3 channels for RGB after cvt_color".into(),
             ));
         }
 
-        let mut flat_data = Vec::with_capacity(rows * cols * channels);
-        for r in 0..rows {
-            for c in 0..cols {
-                let pixel: &Vec3b = rgb_frame.at_2d(r as i32, c as i32)?;
-                flat_data.push((pixel[0] as f32) / 255.0); // R
-                flat_data.push((pixel[1] as f32) / 255.0); // G
-                flat_data.push((pixel[2] as f32) / 255.0); // B
-            }
-        }
+        let array_hwc: Array<f32, _> = if rgb_frame.is_continuous() {
+            // Opción más rápida: Mat es continua, podemos obtener un slice de todos los datos
+            let data_slice_u8 = unsafe {
+                // rgb_frame.data() devuelve *const u8
+                std::slice::from_raw_parts(rgb_frame.data(), rows * cols * channels)
+            };
 
-        let array_hwc = Array::from_shape_vec((rows, cols, channels), flat_data)?;
+            // Convertir el slice de u8 a un iterador de f32 y normalizar
+            // Asumiendo que data_slice_u8 está en orden R,G,B,R,G,B... porque hicimos cvt_color a rgb_frame
+            let float_iter = data_slice_u8.iter().map(|&val_u8| (val_u8 as f32) / 255.0);
+
+            // Crear el ndarray desde el iterador
+            // Esto crea un array 1D, luego lo remoldeamos.
+            Array::from_iter(float_iter).into_shape((rows, cols, channels))? // H, W, C
+        } else {
+            // Opción más lenta (fallback): Mat no es continua, iterar por filas
+            // Todavía es mejor que at_2d por píxel.
+            let mut flat_data = Vec::with_capacity(rows * cols * channels);
+            for r in 0..rows {
+                // rgb_frame.ptr(r as i32)? devuelve *const u8 para esa fila
+                let row_slice_u8 = unsafe {
+                    std::slice::from_raw_parts(rgb_frame.ptr(r as i32)?, cols * channels)
+                };
+                for i in (0..row_slice_u8.len()).step_by(channels) {
+                    // El orden es R, G, B porque rgb_frame es el resultado de COLOR_BGR2RGB
+                    flat_data.push((row_slice_u8[i] as f32) / 255.0); // R
+                    flat_data.push((row_slice_u8[i + 1] as f32) / 255.0); // G
+                    flat_data.push((row_slice_u8[i + 2] as f32) / 255.0); // B
+                }
+            }
+            Array::from_shape_vec((rows, cols, channels), flat_data)?
+        };
 
         // Transpose HWC to CHW
         let array_chw = array_hwc.permuted_axes([2, 0, 1]).to_owned();
@@ -180,27 +241,58 @@ impl TextFrameExtractor {
         // Add batch dimension: CHW -> NCHW
         Ok(array_chw.insert_axis(Axis(0)))
     }
+    // fn postprocess_onnx_output(
+    //     &self,
+    //     onnx_output_single_frame: ndarray::ArrayView3<f32>,
+    // ) -> Result<Mat> {
+    //     // onnx_output_single_frame is CHW (e.g., 1x224x224 if single channel output, or CxHxW)
+    //     // Assuming output is 1xHxW (single channel mask)
+    //     let output_chw = onnx_output_single_frame;
+    //     let (channels_out, height_out, width_out) = output_chw.dim();
 
+    //     if channels_out != 1 {
+    //         // Assuming model outputs a single channel mask
+    //         return Err(ExtractorError::VideoProcessing(format!(
+    //             "Expected 1 output channel from model, got {}",
+    //             channels_out
+    //         )));
+    //     }
+
+    //     // Transpose CHW to HWC
+    //     let output_hwc = output_chw.permuted_axes([1, 2, 0]); // HxWx1
+
+    //     let mut output_mat = Mat::new_rows_cols_with_default(
+    //         height_out as i32,
+    //         width_out as i32,
+    //         CV_8UC1, // Single channel u8
+    //         core::Scalar::all(0.0),
+    //     )?;
+
+    //     for r in 0..height_out {
+    //         for c in 0..width_out {
+    //             let val = output_hwc[[r, c, 0]]; // Access the single channel
+    //             *output_mat.at_2d_mut::<u8>(r as i32, c as i32)? = if val > 0.5 { 255 } else { 0 };
+    //         }
+    //     }
+    //     Ok(output_mat)
+    // }
     fn postprocess_onnx_output(
         &self,
-        onnx_output_single_frame: ndarray::ArrayView3<f32>,
+        onnx_output_single_frame: ndarray::ArrayView3<f32>, // CHW (1xHxW)
     ) -> Result<Mat> {
-        // onnx_output_single_frame is CHW (e.g., 1x224x224 if single channel output, or CxHxW)
-        // Assuming output is 1xHxW (single channel mask)
-        let output_chw = onnx_output_single_frame;
-        let (channels_out, height_out, width_out) = output_chw.dim();
+        let (channels_out, height_out, width_out) = onnx_output_single_frame.dim();
 
         if channels_out != 1 {
-            // Assuming model outputs a single channel mask
             return Err(ExtractorError::VideoProcessing(format!(
                 "Expected 1 output channel from model, got {}",
                 channels_out
             )));
         }
 
-        // Transpose CHW to HWC
-        let output_hwc = output_chw.permuted_axes([1, 2, 0]); // HxWx1
+        // output_single_frame es 1xHxW. Tomamos el primer (y único) canal.
+        let single_channel_view = onnx_output_single_frame.slice(s![0, .., ..]); // HxW
 
+        // Crear la Mat de salida
         let mut output_mat = Mat::new_rows_cols_with_default(
             height_out as i32,
             width_out as i32,
@@ -208,15 +300,38 @@ impl TextFrameExtractor {
             core::Scalar::all(0.0),
         )?;
 
-        for r in 0..height_out {
-            for c in 0..width_out {
-                let val = output_hwc[[r, c, 0]]; // Access the single channel
-                *output_mat.at_2d_mut::<u8>(r as i32, c as i32)? = if val > 0.5 { 255 } else { 0 };
+        // Asegurarse de que output_mat sea continua para el acceso rápido si es posible.
+        // (new_rows_cols_with_default usualmente lo es, pero una verificación no hace daño
+        // o forzarla con .clone_continuous() si es necesario, aunque aquí podría no ser tan crítico)
+
+        if output_mat.is_continuous() && single_channel_view.is_standard_layout() {
+            // Acceso rápido si ambos son continuos/estándar
+            let mat_data_slice_u8_mut = unsafe {
+                // output_mat.data_mut() devuelve *mut u8
+                std::slice::from_raw_parts_mut(output_mat.data_mut(), height_out * width_out)
+            };
+
+            // single_channel_view (HxW) ya está en el orden correcto para iterar
+            // y llenar mat_data_slice_u8_mut secuencialmente.
+            for (f_val, mat_pixel_ref) in single_channel_view
+                .iter()
+                .zip(mat_data_slice_u8_mut.iter_mut())
+            {
+                *mat_pixel_ref = if *f_val > 0.5 { 255 } else { 0 };
+            }
+        } else {
+            // Fallback: iterar con at_2d_mut (como en tu código original)
+            // O un bucle por filas si solo la Mat no es continua.
+            for r in 0..height_out {
+                for c in 0..width_out {
+                    let val = single_channel_view[[r, c]];
+                    *output_mat.at_2d_mut::<u8>(r as i32, c as i32)? =
+                        if val > 0.5 { 255 } else { 0 };
+                }
             }
         }
         Ok(output_mat)
     }
-
     fn calculate_mask_difference_percent(
         &self,
         mask1_opt: Option<&Mat>,
@@ -555,7 +670,10 @@ fn main() -> Result<()> {
         path: std::path::PathBuf::from(path),
     };
 
-    println!("display_frames: {:?}, path: {:?}, use_cpu: {:?}", args.display_frames, args.path, args.use_cpu);
+    println!(
+        "display_frames: {:?}, path: {:?}, use_cpu: {:?}",
+        args.display_frames, args.path, args.use_cpu
+    );
     let video_file_path_str = args
         .path
         .to_str()
