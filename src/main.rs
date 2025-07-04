@@ -17,9 +17,8 @@ use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::thread::available_parallelism;
 use std::time::Duration; // For formatting
-const EXTRACTED_FRAMES_DIR_RUST: &str = "extracted_text_frames_rust";
+const EXTRACTED_FRAMES_DIR_RUST: &str = "RGBImages";
 const MASK_CHANGE_THRESHOLD_PERCENT_RUST: f64 = 10.0;
 const MIN_CHANGE_DURATION_MS_RUST: u64 = 250;
 const MODEL_PATH_RUST: &str = "models/model.onnx"; // Ensure this model exists
@@ -89,12 +88,23 @@ impl TextFrameExtractor {
             ]
         };
 
-        let session = Session::builder()?
-            .with_optimization_level(GraphOptimizationLevel::Disable)?
-            .with_parallel_execution(true)? // If desired and ort version supports
-            .with_intra_threads(available_parallelism()?.get())?
-            .with_execution_providers(providers)?
-            .commit_from_file(model_path)?;
+        let session = if use_cpu {
+            Session::builder()?
+                .with_optimization_level(GraphOptimizationLevel::Level3)?
+                // .with_parallel_execution(true)? // If desired and ort version supports
+                // .with_intra_threads(available_parallelism()?.get())?
+                .with_execution_providers(providers)?
+                .commit_from_file(model_path)?
+        } else {
+            Session::builder()?
+                .with_optimization_level(GraphOptimizationLevel::Level3)?
+                // .with_parallel_execution(true)? // If desired and ort version supports
+                // .with_intra_threads(available_parallelism()?.get())?
+                .with_memory_pattern(false)?
+                .with_parallel_execution(false)?
+                .with_execution_providers(providers)?
+                .commit_from_file(model_path)?
+        };
 
         let input_name = session.inputs[0].name.clone();
         let output_name = session.outputs[0].name.clone();
@@ -175,7 +185,7 @@ impl TextFrameExtractor {
 
             // Crear el ndarray desde el iterador
             // Esto crea un array 1D, luego lo remoldeamos.
-            Array::from_iter(float_iter).into_shape((rows, cols, channels))? // H, W, C
+            Array::from_iter(float_iter).to_shape((rows, cols, channels))?.to_owned() // H, W, C
         } else {
             // Opción más lenta (fallback): Mat no es continua, iterar por filas
             // Todavía es mejor que at_2d por píxel.
